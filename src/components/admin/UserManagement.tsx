@@ -52,6 +52,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Database } from '@/integrations/supabase/types';
+import { AssignRoleDialog } from './AssignRoleDialog';
+import { RoleAssignmentHistory } from './RoleAssignmentHistory';
+import { useRoleAssignments } from '@/hooks/useRoleAssignments';
+import { Clock } from 'lucide-react';
 
 type AppRole = Database['public']['Enums']['app_role'];
 
