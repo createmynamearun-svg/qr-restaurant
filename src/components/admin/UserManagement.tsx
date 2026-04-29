@@ -92,7 +92,25 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
   
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingUser, setEditingUser] = useState<StaffMember | null>(null);
+  const [assignDialogStaff, setAssignDialogStaff] = useState<StaffMember | null>(null);
+  const [, forceTick] = useState(0);
+
+  // Periodic re-render so the temp-role countdown stays fresh
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { data: assignments = [] } = useRoleAssignments(effectiveRestaurantId);
+  const activeAssignmentByUser = useMemo(() => {
+    const map = new Map<string, typeof assignments[number]>();
+    for (const a of assignments) {
+      if (a.status === 'active' && a.assignment_type === 'temporary') {
+        if (!map.has(a.user_id)) map.set(a.user_id, a);
+      }
+    }
+    return map;
+  }, [assignments]);
   
   const [newUser, setNewUser] = useState({
     email: '',
