@@ -550,6 +550,8 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
         restaurantId={effectiveRestaurantId}
       />
     </Card>
+    <RoleAssignmentHistory restaurantId={effectiveRestaurantId} />
+    </div>
   );
 };
 
