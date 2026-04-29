@@ -555,8 +555,6 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
-                          </>
-                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -566,6 +564,12 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
           </Table>
         )}
       </CardContent>
+      <AssignRoleDialog
+        open={!!assignDialogStaff}
+        onOpenChange={(v) => { if (!v) setAssignDialogStaff(null); }}
+        staff={assignDialogStaff}
+        restaurantId={effectiveRestaurantId}
+      />
     </Card>
   );
 };
