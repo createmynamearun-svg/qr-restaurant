@@ -319,6 +319,7 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
   }
 
   return (
+    <div className="space-y-6">
     <Card className="border-0 shadow-md">
       <CardHeader>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
