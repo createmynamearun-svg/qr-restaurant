@@ -226,29 +226,7 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
     },
   });
 
-  // Update staff role
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ userId, role }: { userId: string; role: AppRole }) => {
-      const { error } = await supabase
-        .from('user_roles')
-        .update({ role })
-        .eq('user_id', userId);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['staff-members'] });
-      toast({ title: 'Role Updated', description: 'Staff role updated successfully' });
-      setEditingUser(null);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to update role',
-        variant: 'destructive',
-      });
-    },
-  });
+  // Role updates now go through AssignRoleDialog → manage-staff edge function.
 
   // Toggle active status
   const toggleActiveMutation = useMutation({
