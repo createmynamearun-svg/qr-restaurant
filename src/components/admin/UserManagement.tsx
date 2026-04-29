@@ -486,28 +486,32 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {editingUser?.id === staff.id ? (
-                        <Select
-                          value={editingUser.role}
-                          onValueChange={(v: AppRole) => setEditingUser({ ...editingUser, role: v })}
-                        >
-                          <SelectTrigger className="w-[140px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {staffRoles.map((role) => (
-                              <SelectItem key={role} value={role}>
-                                {roleConfig[role].label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
+                      <div className="flex flex-col gap-1">
                         <Badge variant="secondary" className={config.color}>
                           <Icon className="w-3 h-3 mr-1" />
                           {config.label}
                         </Badge>
-                      )}
+                        {(() => {
+                          const a = activeAssignmentByUser.get(staff.user_id);
+                          if (!a || !a.expires_at) return null;
+                          const ms = new Date(a.expires_at).getTime() - Date.now();
+                          if (ms <= 0) return null;
+                          const h = Math.floor(ms / 3600000);
+                          const m = Math.floor((ms % 3600000) / 60000);
+                          const label = h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+                          const prevLabel = a.previous_role ? roleConfig[a.previous_role as AppRole]?.label || a.previous_role : 'previous role';
+                          return (
+                            <Badge
+                              variant="secondary"
+                              className="bg-blue-100 text-blue-700 w-fit"
+                              title={`Reverts to ${prevLabel} at ${new Date(a.expires_at).toLocaleString()}`}
+                            >
+                              <Clock className="w-3 h-3 mr-1" />
+                              Temp · {label}
+                            </Badge>
+                          );
+                        })()}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -519,36 +523,14 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {editingUser?.id === staff.id ? (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => updateRoleMutation.mutate({ 
-                                userId: staff.user_id, 
-                                role: editingUser.role 
-                              })}
-                              disabled={updateRoleMutation.isPending}
-                            >
-                              <Check className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setEditingUser(null)}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setEditingUser(staff)}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAssignDialogStaff(staff)}
+                          title="Assign role"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button size="sm" variant="ghost" className="text-destructive">
