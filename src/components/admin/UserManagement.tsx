@@ -52,6 +52,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { Database } from '@/integrations/supabase/types';
+import { AssignRoleDialog } from './AssignRoleDialog';
+import { RoleAssignmentHistory } from './RoleAssignmentHistory';
+import { useRoleAssignments } from '@/hooks/useRoleAssignments';
+import { Clock } from 'lucide-react';
 
 type AppRole = Database['public']['Enums']['app_role'];
 
@@ -88,7 +92,25 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
   
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [editingUser, setEditingUser] = useState<StaffMember | null>(null);
+  const [assignDialogStaff, setAssignDialogStaff] = useState<StaffMember | null>(null);
+  const [, forceTick] = useState(0);
+
+  // Periodic re-render so the temp-role countdown stays fresh
+  useEffect(() => {
+    const t = setInterval(() => forceTick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const { data: assignments = [] } = useRoleAssignments(effectiveRestaurantId);
+  const activeAssignmentByUser = useMemo(() => {
+    const map = new Map<string, typeof assignments[number]>();
+    for (const a of assignments) {
+      if (a.status === 'active' && a.assignment_type === 'temporary') {
+        if (!map.has(a.user_id)) map.set(a.user_id, a);
+      }
+    }
+    return map;
+  }, [assignments]);
   
   const [newUser, setNewUser] = useState({
     email: '',
@@ -204,29 +226,7 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
     },
   });
 
-  // Update staff role
-  const updateRoleMutation = useMutation({
-    mutationFn: async ({ userId, role }: { userId: string; role: AppRole }) => {
-      const { error } = await supabase
-        .from('user_roles')
-        .update({ role })
-        .eq('user_id', userId);
-
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['staff-members'] });
-      toast({ title: 'Role Updated', description: 'Staff role updated successfully' });
-      setEditingUser(null);
-    },
-    onError: (error: any) => {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to update role',
-        variant: 'destructive',
-      });
-    },
-  });
+  // Role updates now go through AssignRoleDialog → manage-staff edge function.
 
   // Toggle active status
   const toggleActiveMutation = useMutation({
@@ -319,6 +319,7 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
   }
 
   return (
+    <div className="space-y-6">
     <Card className="border-0 shadow-md">
       <CardHeader>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -464,28 +465,32 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {editingUser?.id === staff.id ? (
-                        <Select
-                          value={editingUser.role}
-                          onValueChange={(v: AppRole) => setEditingUser({ ...editingUser, role: v })}
-                        >
-                          <SelectTrigger className="w-[140px]">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {staffRoles.map((role) => (
-                              <SelectItem key={role} value={role}>
-                                {roleConfig[role].label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
+                      <div className="flex flex-col gap-1">
                         <Badge variant="secondary" className={config.color}>
                           <Icon className="w-3 h-3 mr-1" />
                           {config.label}
                         </Badge>
-                      )}
+                        {(() => {
+                          const a = activeAssignmentByUser.get(staff.user_id);
+                          if (!a || !a.expires_at) return null;
+                          const ms = new Date(a.expires_at).getTime() - Date.now();
+                          if (ms <= 0) return null;
+                          const h = Math.floor(ms / 3600000);
+                          const m = Math.floor((ms % 3600000) / 60000);
+                          const label = h > 0 ? `${h}h ${m}m left` : `${m}m left`;
+                          const prevLabel = a.previous_role ? roleConfig[a.previous_role as AppRole]?.label || a.previous_role : 'previous role';
+                          return (
+                            <Badge
+                              variant="secondary"
+                              className="bg-blue-100 text-blue-700 w-fit"
+                              title={`Reverts to ${prevLabel} at ${new Date(a.expires_at).toLocaleString()}`}
+                            >
+                              <Clock className="w-3 h-3 mr-1" />
+                              Temp · {label}
+                            </Badge>
+                          );
+                        })()}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -497,36 +502,14 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {editingUser?.id === staff.id ? (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => updateRoleMutation.mutate({ 
-                                userId: staff.user_id, 
-                                role: editingUser.role 
-                              })}
-                              disabled={updateRoleMutation.isPending}
-                            >
-                              <Check className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setEditingUser(null)}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => setEditingUser(staff)}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setAssignDialogStaff(staff)}
+                          title="Assign role"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button size="sm" variant="ghost" className="text-destructive">
@@ -551,8 +534,6 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
-                          </>
-                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -562,7 +543,15 @@ const UserManagement = ({ restaurantIdOverride }: UserManagementProps = {}) => {
           </Table>
         )}
       </CardContent>
+      <AssignRoleDialog
+        open={!!assignDialogStaff}
+        onOpenChange={(v) => { if (!v) setAssignDialogStaff(null); }}
+        staff={assignDialogStaff}
+        restaurantId={effectiveRestaurantId}
+      />
     </Card>
+    <RoleAssignmentHistory restaurantId={effectiveRestaurantId} />
+    </div>
   );
 };
 

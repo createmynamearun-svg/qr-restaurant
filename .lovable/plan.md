@@ -1,80 +1,100 @@
+## Goal
 
+In Staff Management, when an admin updates a staff role, allow them to assign it as either **Permanent** or **Temporary** (e.g., 8 hours, 12 hours, 24 hours, or custom). Temporary assignments auto-revert to the staff member's previous role when the duration expires, and every change is recorded in an audit log visible to the admin (e.g., "Assigned Ravi to Waiter today for 8 hours").
 
-## Plan: Fix Customer Menu Promotions & Order Flow
+## What gets built
 
-### Problem Analysis
+### 1. Database changes (new migration)
 
-**Root Cause Identified**: All RLS policies on `offers`, `orders`, `order_items`, and `waiter_calls` contain `EXISTS (SELECT 1 FROM restaurants r WHERE r.id = ... AND r.is_active = true)` subqueries. But the `restaurants` table has NO anonymous SELECT policy — only authenticated staff/super admins can read it. This means **every EXISTS check silently returns false for anonymous (customer) users**, causing:
+**New table: `role_assignments`** — tracks every role change (permanent and temporary) per restaurant.
 
-1. **Offers return 0 rows** for customers (confirmed: anon scan shows "Table 'offers' Row count: 0")
-2. **Order INSERT fails** because the WITH CHECK condition can never pass for anon users
-3. **Waiter calls fail** for the same reason
+Columns:
+- `id` uuid PK
+- `restaurant_id` uuid (FK restaurants, cascade)
+- `user_id` uuid (the staff member)
+- `staff_email` text, `staff_name` text (snapshot for log readability)
+- `previous_role` app_role (nullable)
+- `assigned_role` app_role
+- `assignment_type` text: `'permanent' | 'temporary'`
+- `duration_hours` int (null when permanent)
+- `starts_at` timestamptz default now()
+- `expires_at` timestamptz (null when permanent)
+- `reverted_at` timestamptz (set when auto-revert runs)
+- `status` text: `'active' | 'expired' | 'cancelled'`
+- `assigned_by` uuid, `assigned_by_email` text
+- `notes` text
+- `created_at` timestamptz default now()
 
-The user also wants external platform ads (Swiggy, Zomato, Dunzo, Coca-Cola) removed from the customer menu — only showing the restaurant's own promotional offers from the `offers` table.
+RLS:
+- Restaurant admins / super admins: full manage on their restaurant rows
+- Staff: SELECT own rows
+- Realtime publication enabled
 
----
+**Function `expire_temporary_roles()`** (SECURITY DEFINER):
+- Finds rows where `status='active'`, `expires_at < now()`, `assignment_type='temporary'`
+- Reverts `user_roles.role` to `previous_role` (or deletes if previous_role null)
+- Marks row `status='expired'`, sets `reverted_at`
+- Inserts a `system_logs` row for the revert
 
-### Step 1: Database Migration — Fix RLS Root Cause
+**pg_cron job**: Run `expire_temporary_roles()` every 5 minutes.
 
-Create a `SECURITY DEFINER` function that bypasses RLS to check restaurant active status:
+Also call `expire_temporary_roles()` lazily from the staff list query (defensive — covers cron downtime).
 
-```sql
-CREATE OR REPLACE FUNCTION public.is_restaurant_active(_restaurant_id uuid)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.restaurants
-    WHERE id = _restaurant_id AND is_active = true
-  )
-$$;
-```
+### 2. Edge function update: `manage-staff`
 
-Then update all affected RLS policies to use `is_restaurant_active(restaurant_id)` instead of the inline EXISTS subquery:
+Add new actions:
+- `assign_role`: payload `{ user_id, role, assignment_type, duration_hours?, notes? }`
+  - Reads current role, writes new role to `user_roles`, inserts `role_assignments` row, inserts `system_logs` entry like `staff.role_assigned` with details (assigned_by, target, role, duration).
+- `revert_role`: manually cancel an active temporary assignment immediately.
 
-- **offers** SELECT policy (Public can view active offers)
-- **orders** INSERT policy (Anyone can create orders)
-- **order_items** INSERT policy (Anyone can create order items)
-- **waiter_calls** INSERT policy (Anyone can create waiter calls)
-- **waiter_calls** SELECT policies (Anon + Authenticated)
-- **table_sessions** INSERT/SELECT policies
-- **feedback** INSERT policy
-- **customer_events** INSERT policy
+Server-side validation: only `restaurant_admin` / `super_admin` can call; staff role must be in the allowed staffRoles list; duration_hours must be 1–720 if temporary.
 
-This single function fix resolves all customer-facing failures at once.
+### 3. UI changes in `src/components/admin/UserManagement.tsx`
 
-### Step 2: Remove External Ads from Customer Menu
+Replace the inline role dropdown edit with an **Assign Role dialog**:
+- Role select (existing staff roles)
+- Assignment type radio: **Permanent** / **Temporary**
+- If Temporary: duration preset chips (4h, 8h, 12h, 24h, 48h) + "Custom hours" input
+- Optional notes field
+- Shows a preview line: "Ravi will be Waiter until Apr 30, 2026 8:42 PM"
 
-In `src/pages/CustomerMenu.tsx`:
-- Remove `HeaderBannerAd`, `CategoryDividerAd`, `FooterPromoAd`, and `AdsPopup` components from the render
-- Remove the `useAdsByPlacement`, `useRandomActiveAd`, `useTrackAdImpression`, `useTrackAdClick` hook calls
-- Remove all ad-related state variables (`showAdPopup`, `adShown`, `headerAdDismissed`, etc.)
-- Keep the `OffersSlider` (restaurant's own promotions) — this is what the user wants displayed
+In the staff table:
+- New "Current Role" column shows the role badge plus, if active temp assignment exists, a small countdown chip: `Temp · 6h 23m left` with tooltip "Reverts to Kitchen at 8:42 PM".
+- Real-time countdown updates client-side every minute.
 
-### Step 3: Verify End-to-End Order Flow
+### 4. New "Role Assignment History" panel
 
-After the RLS fix:
-- Customer scans QR → sees restaurant branding + offers slider
-- Customer adds items → places order → order INSERT succeeds
-- Kitchen dashboard shows the new order
-- Kitchen marks order as preparing → ready → served
-- Billing counter can process payment
+A new tab/section on the same page: table of recent assignments scoped to the restaurant — Staff, From → To, Type, Duration, Started, Expires/Reverted, Assigned By, Status. Filters by staff member and date range. Realtime-subscribed via `role_assignments` channel.
 
----
+### 5. Hook: `src/hooks/useRoleAssignments.ts`
 
-### Technical Details
+- `useActiveAssignments(restaurantId)` — list active temp assignments (joined with staff_profiles).
+- `useAssignmentHistory(restaurantId, filters)` — paginated history.
+- `useAssignRole()` mutation → calls `manage-staff` edge function with `assign_role`.
+- `useRevertRole()` mutation → calls `revert_role`.
+- Realtime subscription on `role_assignments` to invalidate queries.
 
-| Issue | Root Cause | Fix |
-|-------|-----------|-----|
-| Offers not showing | `EXISTS(restaurants)` fails for anon | `is_restaurant_active()` SECURITY DEFINER |
-| Order placement fails | Same EXISTS check in INSERT policy | Same function fix |
-| External ads showing | Platform ads (Swiggy/Zomato) rendered | Remove ad components from CustomerMenu |
-| Promotions missing | Offers RLS blocks anon reads | Same function fix |
+## Technical notes
 
-**Files to modify:**
-- 1 new database migration (RLS fix + helper function)
-- `src/pages/CustomerMenu.tsx` (remove external ads, keep offers)
+- `previous_role` lookup happens server-side in the edge function before mutating `user_roles`.
+- Auto-revert is authoritative on the server (cron + lazy trigger). Client-side countdown is display-only.
+- All writes go through the edge function (service role) so we keep RLS strict and ensure consistent log entries.
+- Existing real-time subscription on `user_roles` already triggers staff list refresh — kept as-is.
 
+## Files to add / change
+
+Add:
+- `supabase/migrations/<timestamp>_role_assignments.sql`
+- `src/hooks/useRoleAssignments.ts`
+- `src/components/admin/AssignRoleDialog.tsx`
+- `src/components/admin/RoleAssignmentHistory.tsx`
+
+Edit:
+- `supabase/functions/manage-staff/index.ts` (add `assign_role` + `revert_role`)
+- `src/components/admin/UserManagement.tsx` (replace inline edit with dialog, add countdown chip, add history tab)
+
+## Out of scope
+
+- Shift scheduling / recurring rotations (this is single-shot temporary assignments)
+- Notifications/emails to staff on role change
+- Payroll / hours worked reporting

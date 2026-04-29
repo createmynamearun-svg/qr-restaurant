@@ -1532,6 +1532,81 @@ export type Database = {
         }
         Relationships: []
       }
+      role_assignments: {
+        Row: {
+          assigned_by: string | null
+          assigned_by_email: string | null
+          assigned_role: Database["public"]["Enums"]["app_role"]
+          assignment_type: string
+          created_at: string
+          duration_hours: number | null
+          expires_at: string | null
+          id: string
+          notes: string | null
+          previous_role: Database["public"]["Enums"]["app_role"] | null
+          restaurant_id: string
+          reverted_at: string | null
+          staff_email: string | null
+          staff_name: string | null
+          starts_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          assigned_by?: string | null
+          assigned_by_email?: string | null
+          assigned_role: Database["public"]["Enums"]["app_role"]
+          assignment_type?: string
+          created_at?: string
+          duration_hours?: number | null
+          expires_at?: string | null
+          id?: string
+          notes?: string | null
+          previous_role?: Database["public"]["Enums"]["app_role"] | null
+          restaurant_id: string
+          reverted_at?: string | null
+          staff_email?: string | null
+          staff_name?: string | null
+          starts_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          assigned_by?: string | null
+          assigned_by_email?: string | null
+          assigned_role?: Database["public"]["Enums"]["app_role"]
+          assignment_type?: string
+          created_at?: string
+          duration_hours?: number | null
+          expires_at?: string | null
+          id?: string
+          notes?: string | null
+          previous_role?: Database["public"]["Enums"]["app_role"] | null
+          restaurant_id?: string
+          reverted_at?: string | null
+          staff_email?: string | null
+          staff_name?: string | null
+          starts_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "role_assignments_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "role_assignments_restaurant_id_fkey"
+            columns: ["restaurant_id"]
+            isOneToOne: false
+            referencedRelation: "restaurants_public"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scan_analytics: {
         Row: {
           city: string | null
@@ -2203,6 +2278,7 @@ export type Database = {
       }
     }
     Functions: {
+      expire_temporary_roles: { Args: never; Returns: undefined }
       get_user_restaurant_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
